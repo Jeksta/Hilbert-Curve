@@ -1,0 +1,114 @@
+[gd_scene load_steps=2 format=2]
+
+[sub_resource type="GDScript" id=1]
+script/source = "extends Node2D
+
+var curve_path: PoolVector2Array = []
+
+# The pen only draws from prev_counter to counter for
+# performance reasons
+var counter: int = 1
+var prev_counter: int = 1
+# When use_flat_steps is false, counter_steps is calulated based on the 
+# total_time and the tickrate
+var use_flat_steps: bool = false
+var counter_steps: int = -1
+
+# Tickrate and total_time in seconds
+var timer_tickrate: float = 0.025
+var timer_total_time: float = 10
+
+var start_time: int = 0
+
+var birb: Image = Image.new()
+var _pen: Node2D = Node2D.new()
+
+onready var timer: Timer = $Timer
+
+
+func _ready():
+	birb.load(\"res://img.png\")
+	
+	var screen_size: Vector2 = get_viewport().size
+	curve_path = HilbertCurve.get_path(7, screen_size)
+
+	_init_drawing_canvas(screen_size)
+	
+	# Wait for the buffer image to finish loading and start the timer
+	yield(get_tree().create_timer(0.5), \"timeout\")
+	
+	# Calculate count_steps
+	if not use_flat_steps:
+		var total_ticks: float = timer_total_time / timer_tickrate
+		counter_steps = len(curve_path) / total_ticks
+	timer.start(timer_tickrate)
+	timer.connect(\"timeout\", self, \"_on_timer_timeout\")
+	
+	start_time = OS.get_ticks_msec()
+
+
+func _init_drawing_canvas(_size: Vector2) -> void:
+	# Using a Viewport as Canvas
+	# (based on: https://godotengine.org/qa/24621/painting-game-persist-drawing)
+	var viewport = Viewport.new()
+	viewport.size = _size
+	viewport.usage = Viewport.USAGE_2D
+	# Note: I also tried CLEAR_MODE_NEVER but it doesn't draw anything.
+	# (see issue https://github.com/godotengine/godot/issues/20775)
+	viewport.render_target_clear_mode = Viewport.CLEAR_MODE_ONLY_NEXT_FRAME
+	viewport.render_target_v_flip = true
+	add_child(viewport)
+	
+	# Using a Node2D to draw
+	_pen.connect(\"draw\", self, \"_on_draw\")
+	viewport.add_child(_pen)
+
+	# Use a sprite to display the result texture
+	var _buffer = TextureRect.new()
+	_buffer.set_texture(viewport.get_texture())
+	add_child(_buffer)
+
+
+func _on_draw():
+	birb.lock()
+	for i in range(prev_counter, counter):
+		
+		var from: Vector2 = curve_path[i]
+		var to: Vector2 = curve_path[i- 1]
+		# Calculate the point between both path points
+		var center = (to - from) / 2 + from
+		
+		# Map the coordiante of the path point onto the birb image
+		center = map_vec(center, get_viewport().size, birb.get_size())
+		var color: = birb.get_pixel(floor(center.x), floor(center.y))
+		
+		_pen.draw_line(from, to, color, 1)
+	birb.unlock()
+
+
+func _on_timer_timeout():
+	prev_counter = counter
+	counter += counter_steps
+	if counter >= len(curve_path):
+		timer.stop()
+		counter = len(curve_path)
+		print(\"Last draw call at: \", OS.get_ticks_msec() - start_time, \" ms\")
+	_pen.update()
+
+
+# Re-maps a number from one range to another
+# UNTESTED
+static func map(value, start1, stop1, start2, stop2):
+	var normal = (value - start1) / (stop1 - start1)
+	return normal * (stop2 - start2) + start2
+
+
+# Re-maps a vector from one range to another
+static func map_vec(coordinate: Vector2, from_range: Vector2, to_range: Vector2) -> Vector2:
+	return coordinate / from_range * to_range
+"
+
+[node name="HilbertCurve" type="Node2D"]
+script = SubResource( 1 )
+
+[node name="Timer" type="Timer" parent="."]
